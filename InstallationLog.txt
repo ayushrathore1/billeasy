@@ -1,0 +1,14 @@
+************************************* Invoked: Wed Mar 25 10:47:15 2026
+[0] Arguments: C:\Users\Lenovo\AppData\Local\Temp\WinGet\MSYS2.MSYS2.20251213\msys2-x86_64-20251213.exe, install, --confirm-command, --root, C:\msys64
+[24] Operations sanity check succeeded.
+[55] Using metadata cache from "C:/Users/Lenovo/AppData/Local/cache\\qt-installer-framework\\d75f1c19-3379-3717-ae8d-1404b51494a9"
+[55] Found 0 cached items.
+[81] Loaded control script ":/metadata/installer-config/control_js"
+[82] TargetDirectoryInUse : Error : The directory you selected already exists and contains an installation. Choose a different target for installation.
+************************************* Invoked: Wed Mar 25 10:47:17 2026
+[0] Arguments: C:\Users\Lenovo\AppData\Local\Temp\WinGet\MSYS2.MSYS2.20251213\msys2-x86_64-20251213.exe, install, --confirm-command, --root, C:\msys64
+[15] Operations sanity check succeeded.
+[29] Using metadata cache from "C:/Users/Lenovo/AppData/Local/cache\\qt-installer-framework\\d75f1c19-3379-3717-ae8d-1404b51494a9"
+[30] Found 0 cached items.
+[36] Loaded control script ":/metadata/installer-config/control_js"
+[37] TargetDirectoryInUse : Error : The directory you selected already exists and contains an installation. Choose a different target for installation.

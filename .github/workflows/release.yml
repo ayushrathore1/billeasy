@@ -1,0 +1,61 @@
+name: Build and Release BillEasy
+
+on:
+  push:
+    branches:
+      - release
+
+jobs:
+  build-and-release:
+    permissions:
+      contents: write
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          cache-on-failure: true
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'BillEasy v__VERSION__'
+          releaseBody: |
+            ## BillEasy v__VERSION__
+
+            ### Download & Install
+            1. Download **BillEasy_x64-setup.exe** below
+            2. Right-click the file → Properties → tick **Unblock** → OK
+            3. Double-click to install
+            4. Enter your license key when prompted
+
+            ### For Existing Users
+            Your app will show an update notification automatically.
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc

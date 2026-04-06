@@ -1,0 +1,44 @@
+# Node
+node_modules/
+dist/
+
+# Rust
+target/
+target-dev/
+src-tauri/target/
+src-tauri/target-dev/
+
+# Environment
+.env
+.env.local
+
+# License server database (local only)
+license-server/licenses.db
+license-server/node_modules/
+
+# Build artifacts
+*.exe
+*.msi
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keys (NEVER commit these)
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editor
+.vscode/
+.idea/
+
+# Temp files
+*.txt.tmp
+check_output.txt
+check_result*.txt
+toolchain_info.txt
+license-server/
+license-server/
+nul
