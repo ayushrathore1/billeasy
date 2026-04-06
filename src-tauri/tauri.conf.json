@@ -37,10 +37,7 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "perMachine",
-        "shortcutName": "BillEasy",
-        "createDesktopShortcut": true,
-        "createStartMenuShortcut": true
+        "installMode": "perMachine"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
