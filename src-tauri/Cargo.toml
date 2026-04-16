@@ -19,6 +19,8 @@ tokio = { version = "1", features = ["full"] }
 once_cell = "1"
 reqwest = { version = "0.12", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }
+image = "0.25"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

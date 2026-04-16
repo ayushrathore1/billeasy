@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useMenuStore } from '../store/menuStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { call } from '../lib/tauri'
@@ -10,7 +10,7 @@ export default function Setup() {
     createCategory, updateCategory, deleteCategory,
     createItem, updateItem, deleteItem,
   } = useMenuStore()
-  const { settings, fetchSettings, saveSettings } = useSettingsStore()
+  const { settings, fetchSettings, saveSettings, logoDataUri, fetchLogo, saveLogo, deleteLogo } = useSettingsStore()
 
   const [showAddCat, setShowAddCat] = useState(false)
   const [newCatName, setNewCatName] = useState('')
@@ -22,11 +22,30 @@ export default function Setup() {
   const [editingItemPrice, setEditingItemPrice] = useState('')
   const [testPrinting, setTestPrinting] = useState(false)
   const [toast, setToast] = useState(null)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [detectedPrinters, setDetectedPrinters] = useState([])
+  const [loadingPrinters, setLoadingPrinters] = useState(false)
+  const fileInputRef = useRef(null)
 
   useEffect(() => {
     fetchCategories()
     fetchSettings()
+    fetchLogo()
+    detectPrinters()
   }, [])
+
+  const detectPrinters = async () => {
+    setLoadingPrinters(true)
+    try {
+      const printers = await call('list_printers')
+      setDetectedPrinters(printers || [])
+    } catch (e) {
+      console.warn('Printer detection failed:', e)
+      setDetectedPrinters([])
+    } finally {
+      setLoadingPrinters(false)
+    }
+  }
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -115,6 +134,57 @@ export default function Setup() {
     } catch (e) {
       showToast(typeof e === 'string' ? e : 'Print failed', 'error')
     } finally { setTestPrinting(false) }
+  }
+
+  // ── Logo upload handler ──
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      showToast('Please select an image file', 'error')
+      return
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image must be under 5MB', 'error')
+      return
+    }
+
+    setUploadingLogo(true)
+    try {
+      // Read file as base64
+      const reader = new FileReader()
+      const base64Data = await new Promise((resolve, reject) => {
+        reader.onload = () => {
+          // Remove the data URI prefix (data:image/png;base64,)
+          const result = reader.result.split(',')[1]
+          resolve(result)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      await saveLogo(base64Data)
+      showToast('Logo uploaded!')
+    } catch (e) {
+      showToast(typeof e === 'string' ? e : 'Logo upload failed', 'error')
+    } finally {
+      setUploadingLogo(false)
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDeleteLogo = async () => {
+    try {
+      await deleteLogo()
+      showToast('Logo removed')
+    } catch (e) {
+      showToast(typeof e === 'string' ? e : 'Failed to remove logo', 'error')
+    }
   }
 
   return (
@@ -303,8 +373,8 @@ export default function Setup() {
         )}
 
         {/* Settings panel at bottom */}
-        <div className="border-t border-gray-200 bg-white p-4">
-          <div className="text-sm font-semibold text-gray-700 mb-3">⚙️ Shop Settings</div>
+        <div className="border-t border-gray-200 bg-white p-4 overflow-y-auto max-h-[50vh]">
+          <div className="text-sm font-semibold text-gray-700 mb-3">⚙️ Shop & Bill Settings</div>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label className="text-xs text-gray-500 font-medium">Shop Name</label>
@@ -315,10 +385,29 @@ export default function Setup() {
               />
             </div>
             <div>
+              <label className="text-xs text-gray-500 font-medium">Tagline</label>
+              <input
+                value={settings.shop_tagline}
+                onChange={e => saveSettings({ shop_tagline: e.target.value })}
+                placeholder="Crafted with Taste & Trust"
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </div>
+            <div>
               <label className="text-xs text-gray-500 font-medium">Address</label>
               <input
                 value={settings.shop_address}
                 onChange={e => saveSettings({ shop_address: e.target.value })}
+                placeholder="Near Main Market, City"
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 font-medium">Phone</label>
+              <input
+                value={settings.shop_phone}
+                onChange={e => saveSettings({ shop_phone: e.target.value })}
+                placeholder="+91 9XXXXXXXXX"
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
@@ -329,6 +418,33 @@ export default function Setup() {
                 onChange={e => saveSettings({ bill_footer: e.target.value })}
                 className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
               />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 font-medium">GST %</label>
+              <input
+                type="number"
+                min="0"
+                max="28"
+                step="0.5"
+                value={settings.gst_percent || 0}
+                onChange={e => saveSettings({ gst_percent: parseFloat(e.target.value) || 0 })}
+                placeholder="5"
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 font-medium">Default Payment Mode</label>
+              <select
+                value={settings.payment_mode || ''}
+                onChange={e => saveSettings({ payment_mode: e.target.value })}
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+              >
+                <option value="">None</option>
+                <option value="Cash">💵 Cash</option>
+                <option value="UPI">📱 UPI</option>
+                <option value="Card">💳 Card</option>
+                <option value="Online">🌐 Online</option>
+              </select>
             </div>
             <div>
               <label className="text-xs text-gray-500 font-medium">Printer Connection</label>
@@ -344,35 +460,179 @@ export default function Setup() {
               </select>
             </div>
           </div>
+
+          {/* ── Receipt Logo Upload ── */}
+          <div className="mb-3 p-3 rounded-xl border border-gray-200 bg-gray-50">
+            <div className="flex items-start gap-3">
+              {/* Logo preview */}
+              <div className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
+                {logoDataUri ? (
+                  <img src={logoDataUri} alt="Logo" className="w-full h-full object-contain" />
+                ) : (
+                  <span className="text-gray-300 text-2xl">🖼️</span>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-gray-700 mb-1">Receipt Logo / Watermark</div>
+                <p className="text-xs text-gray-400 mb-2">
+                  Appears as a low-opacity background watermark on PDF receipts. Printed as header on thermal printers.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="hidden"
+                    id="logo-upload"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingLogo}
+                    className="bg-brand-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-brand-600 disabled:opacity-50 transition-colors"
+                  >
+                    {uploadingLogo ? 'Uploading…' : logoDataUri ? '🔄 Change' : '📤 Upload'}
+                  </button>
+                  {logoDataUri && (
+                    <button
+                      onClick={handleDeleteLogo}
+                      className="text-red-500 hover:text-red-700 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50 transition-colors"
+                    >
+                      🗑️ Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Detected Printers ── */}
+          {detectedPrinters.length > 0 && (
+            <div className="mb-3 p-3 rounded-xl border border-blue-100 bg-blue-50">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-blue-700">🖨️ Detected Printers ({detectedPrinters.length})</div>
+                <button
+                  onClick={detectPrinters}
+                  disabled={loadingPrinters}
+                  className="text-xs text-blue-500 hover:text-blue-700 font-medium disabled:opacity-50"
+                >
+                  {loadingPrinters ? '⏳ Scanning…' : '🔄 Refresh'}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 max-h-32 overflow-y-auto">
+                {detectedPrinters.map((p, i) => (
+                  <button
+                    key={i}
+                    onClick={() => saveSettings({ printer_name: p.name, printer_type: 'name' })}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs transition-all ${
+                      settings.printer_name === p.name && settings.printer_type === 'name'
+                        ? 'bg-brand-500 text-white shadow-sm'
+                        : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
+                    }`}
+                  >
+                    <span className="text-base">
+                      {p.name.toLowerCase().includes('pdf') ? '📄'
+                        : p.name.toLowerCase().includes('fax') ? '📠'
+                        : p.name.toLowerCase().includes('onenote') || p.name.toLowerCase().includes('xps') ? '📝'
+                        : '🖨️'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{p.name}</div>
+                      <div className={`text-[10px] truncate ${
+                        settings.printer_name === p.name && settings.printer_type === 'name' ? 'text-white/70' : 'text-gray-400'
+                      }`}>
+                        {p.driver} • {p.port_name}
+                      </div>
+                    </div>
+                    {settings.printer_name === p.name && settings.printer_type === 'name' && (
+                      <span className="text-xs">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {detectedPrinters.length === 0 && !loadingPrinters && (
+            <div className="mb-3 p-2 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-between">
+              <span className="text-xs text-gray-400">No printers detected</span>
+              <button
+                onClick={detectPrinters}
+                className="text-xs text-brand-500 hover:text-brand-700 font-medium"
+              >
+                🔍 Scan Printers
+              </button>
+            </div>
+          )}
+
+          {loadingPrinters && detectedPrinters.length === 0 && (
+            <div className="mb-3 p-3 rounded-xl border border-gray-200 bg-gray-50 flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-gray-500">Scanning for printers…</span>
+            </div>
+          )}
+
+          {/* ── Printer options row ── */}
           <div className="flex items-end gap-2">
             <div className="flex-1">
               <label className="text-xs text-gray-500 font-medium">
                 {settings.printer_type === 'bluetooth' ? 'Bluetooth COM Port'
                   : settings.printer_type === 'network' ? 'Printer IP Address'
-                  : settings.printer_type === 'name' ? 'Shared Printer Name'
+                  : settings.printer_type === 'name' ? 'Selected Printer'
                   : 'USB Port Name'}
               </label>
-              <input
-                value={settings.printer_name}
-                onChange={e => saveSettings({ printer_name: e.target.value })}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-                placeholder={
-                  settings.printer_type === 'bluetooth' ? 'COM3'
-                    : settings.printer_type === 'network' ? '192.168.1.100:9100'
-                    : settings.printer_type === 'name' ? 'POS-58'
-                    : 'USB001'
-                }
-              />
+              {settings.printer_type === 'name' && detectedPrinters.length > 0 ? (
+                <select
+                  value={settings.printer_name}
+                  onChange={e => saveSettings({ printer_name: e.target.value })}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                >
+                  <option value="">— Select a printer —</option>
+                  {detectedPrinters.map((p, i) => (
+                    <option key={i} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={settings.printer_name}
+                  onChange={e => saveSettings({ printer_name: e.target.value })}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
+                  placeholder={
+                    settings.printer_type === 'bluetooth' ? 'COM3'
+                      : settings.printer_type === 'network' ? '192.168.1.100:9100'
+                      : settings.printer_type === 'name' ? 'POS-58'
+                      : 'USB001'
+                  }
+                />
+              )}
               <p className="text-xs text-gray-400 mt-0.5">
                 {settings.printer_type === 'bluetooth'
                   ? 'Pair printer in Windows Settings → Bluetooth first, then use assigned COM port'
                   : settings.printer_type === 'network'
                   ? 'Enter printer IP. Port 9100 is used if not specified'
                   : settings.printer_type === 'name'
-                  ? 'Use the exact Windows shared printer name'
+                  ? 'Choose a printer from the detected list above, or type a name manually'
                   : 'Usually USB001 — check in Device Manager → Ports'}
               </p>
             </div>
+
+            {/* Has cutter toggle */}
+            <div className="flex flex-col items-center mb-5">
+              <label className="text-xs text-gray-500 font-medium mb-1 whitespace-nowrap">Auto-Cut</label>
+              <button
+                onClick={() => saveSettings({ has_cutter: !settings.has_cutter })}
+                className={`relative w-10 h-5 rounded-full transition-colors ${
+                  settings.has_cutter ? 'bg-green-500' : 'bg-gray-300'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                  settings.has_cutter ? 'translate-x-5' : 'translate-x-0.5'
+                }`} />
+              </button>
+              <span className="text-xs text-gray-400 mt-0.5">{settings.has_cutter ? 'ON' : 'OFF'}</span>
+            </div>
+
             <button
               onClick={handleTestPrint}
               disabled={testPrinting}

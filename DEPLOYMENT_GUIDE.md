@@ -97,9 +97,9 @@ git push -u origin main
 
 | Key | Value |
 |-----|-------|
-| `ADMIN_SECRET` | A strong password (e.g. `BillEasy@Admin#2026!`) |
+| `ADMIN_SECRET` | A strong password (e.g. `![alt text](image.png)!`) |
 | `PORT` | `10000` (Render default) |
-
+****
 6. Click **Deploy Web Service**
 
 ### 1.4 — Note Your Server URL

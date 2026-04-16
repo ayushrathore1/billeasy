@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react'
 import { useCartStore } from '../store/cartStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { call } from '../lib/tauri'
+import ReceiptPreview from './ReceiptPreview'
 
 export default function Cart({ onPrintSuccess, onPrintError }) {
   const { quantities, items, clear, getCartItems, getTotal } = useCartStore()
   const { settings, fetchSettings } = useSettingsStore()
   const [isPrinting, setIsPrinting] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewOrderId, setPreviewOrderId] = useState(0)
 
   useEffect(() => {
     fetchSettings()
@@ -18,13 +21,13 @@ export default function Cart({ onPrintSuccess, onPrintError }) {
   // Enter key to print
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === 'Enter' && cartItems.length > 0 && !isPrinting) {
+      if (e.key === 'Enter' && cartItems.length > 0 && !isPrinting && !showPreview) {
         handlePrintAndClear()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [cartItems, isPrinting])
+  }, [cartItems, isPrinting, showPreview])
 
   const handlePrintAndClear = async () => {
     if (cartItems.length === 0 || isPrinting) return
@@ -66,6 +69,38 @@ export default function Cart({ onPrintSuccess, onPrintError }) {
       onPrintError?.(typeof e === 'string' ? e : 'Print failed — check printer connection')
     } finally {
       setIsPrinting(false)
+    }
+  }
+
+  const handlePdfPreview = async () => {
+    if (cartItems.length === 0) return
+
+    try {
+      // Save the order first
+      const orderId = await call('save_order', {
+        items: cartItems.map(i => ({
+          item_id: i.id,
+          name: i.name,
+          price: i.price,
+          qty: i.qty,
+        })),
+        subtotal: total,
+        total: total,
+      })
+
+      setPreviewOrderId(orderId)
+      setShowPreview(true)
+    } catch (e) {
+      onPrintError?.(typeof e === 'string' ? e : 'Failed to save order')
+    }
+  }
+
+  const handlePreviewClose = () => {
+    setShowPreview(false)
+    // Clear cart after PDF preview (order was already saved)
+    if (previewOrderId > 0) {
+      clear()
+      onPrintSuccess?.()
     }
   }
 
@@ -113,25 +148,56 @@ export default function Cart({ onPrintSuccess, onPrintError }) {
           <span className="text-2xl font-bold text-brand-600">₹{total}</span>
         </div>
 
-        <button
-          onClick={handlePrintAndClear}
-          disabled={cartItems.length === 0 || isPrinting}
-          className="w-full py-4 rounded-xl font-bold text-base transition-all flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-40 disabled:cursor-not-allowed bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white shadow-md hover:shadow-lg"
-        >
-          {isPrinting ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Printing…
-            </>
-          ) : (
-            <>🖨️ Print & Clear</>
-          )}
-        </button>
+        {/* Print buttons row */}
+        <div className="flex gap-2">
+          <button
+            onClick={handlePrintAndClear}
+            disabled={cartItems.length === 0 || isPrinting}
+            className="flex-1 py-4 rounded-xl font-bold text-base transition-all flex items-center justify-center gap-2 min-h-[56px] disabled:opacity-40 disabled:cursor-not-allowed bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white shadow-md hover:shadow-lg"
+          >
+            {isPrinting ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Printing…
+              </>
+            ) : (
+              <>🖨️ Print</>
+            )}
+          </button>
+
+          {/* PDF / Windows Print button */}
+          <button
+            onClick={handlePdfPreview}
+            disabled={cartItems.length === 0 || isPrinting}
+            title="Preview & print via Windows printer or save as PDF"
+            className="w-14 py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-700 border border-gray-300 shadow-sm"
+          >
+            📄
+          </button>
+        </div>
 
         <p className="text-center text-xs text-gray-400">
-          Press <kbd className="bg-gray-100 rounded px-1 py-0.5 font-mono">Enter</kbd> to print
+          Press <kbd className="bg-gray-100 rounded px-1 py-0.5 font-mono">Enter</kbd> to print &nbsp;|&nbsp; 📄 for PDF
         </p>
       </div>
+
+      {/* Receipt Preview Modal */}
+      {showPreview && (
+        <ReceiptPreview
+          orderId={previewOrderId}
+          items={cartItems.map(i => ({
+            item_id: i.id,
+            name: i.name,
+            price: i.price,
+            qty: i.qty,
+          }))}
+          total={total}
+          shopName={settings.shop_name}
+          shopAddress={settings.shop_address}
+          billFooter={settings.bill_footer}
+          onClose={handlePreviewClose}
+        />
+      )}
     </div>
   )
 }

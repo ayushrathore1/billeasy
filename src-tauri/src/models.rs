@@ -38,8 +38,14 @@ pub struct Order {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub shop_name: String,
+    pub shop_tagline: String,
     pub shop_address: String,
+    pub shop_phone: String,
     pub bill_footer: String,
     pub printer_name: String,
     pub printer_type: String, // "usb" | "bluetooth" | "network" | "name"
+    pub logo_enabled: bool,
+    pub has_cutter: bool,
+    pub gst_percent: f64,
+    pub payment_mode: String, // "Cash" | "UPI" | "Card" | ""
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { call } from '../lib/tauri'
+import ReceiptPreview from '../components/ReceiptPreview'
 
 const PAGE_SIZE = 20
 
@@ -10,15 +11,25 @@ export default function History() {
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState(null)
+  const [previewOrder, setPreviewOrder] = useState(null)
+  const [settings, setSettings] = useState(null)
 
   useEffect(() => {
     loadSummary()
     loadOrders()
+    loadSettings()
   }, [])
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3000)
+  }
+
+  const loadSettings = async () => {
+    try {
+      const s = await call('get_settings')
+      setSettings(s)
+    } catch (e) { console.error(e) }
   }
 
   const loadSummary = async () => {
@@ -46,19 +57,32 @@ export default function History() {
 
   const handleReprint = async (order) => {
     try {
-      const settings = await call('get_settings')
+      const s = settings || await call('get_settings')
       await call('print_receipt', {
         orderId: order.id,
         items: order.items,
         total: order.total,
-        shopName: settings.shop_name,
-        shopAddress: settings.shop_address,
-        billFooter: settings.bill_footer,
+        shopName: s.shop_name,
+        shopAddress: s.shop_address,
+        billFooter: s.bill_footer,
       })
       showToast('Receipt reprinted!')
     } catch (e) {
       showToast(typeof e === 'string' ? e : 'Reprint failed', 'error')
     }
+  }
+
+  const handlePdfPreview = async (order) => {
+    if (!settings) {
+      try {
+        const s = await call('get_settings')
+        setSettings(s)
+      } catch (e) {
+        showToast('Failed to load settings', 'error')
+        return
+      }
+    }
+    setPreviewOrder(order)
   }
 
   const formatTime = (dt) => {
@@ -130,7 +154,7 @@ export default function History() {
                 <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Time</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase">Items</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500 text-xs uppercase">Total</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-500 text-xs uppercase">Action</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-500 text-xs uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
@@ -141,13 +165,22 @@ export default function History() {
                   <td className="px-4 py-3 text-gray-700 max-w-xs truncate">{formatItems(order.items)}</td>
                   <td className="px-4 py-3 text-right font-bold text-gray-800">₹{order.total.toFixed(0)}</td>
                   <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => handleReprint(order)}
-                      className="text-brand-500 hover:text-brand-700 font-medium text-xs hover:underline"
-                      title="Reprint receipt"
-                    >
-                      🖨️ Reprint
-                    </button>
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => handleReprint(order)}
+                        className="text-brand-500 hover:text-brand-700 font-medium text-xs hover:underline"
+                        title="Reprint receipt on thermal printer"
+                      >
+                        🖨️ Reprint
+                      </button>
+                      <button
+                        onClick={() => handlePdfPreview(order)}
+                        className="text-gray-500 hover:text-gray-700 font-medium text-xs hover:underline"
+                        title="Preview and print via Windows printer or save as PDF"
+                      >
+                        📄 PDF
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -179,6 +212,19 @@ export default function History() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Receipt Preview Modal */}
+      {previewOrder && settings && (
+        <ReceiptPreview
+          orderId={previewOrder.id}
+          items={previewOrder.items}
+          total={previewOrder.total}
+          shopName={settings.shop_name}
+          shopAddress={settings.shop_address}
+          billFooter={settings.bill_footer}
+          onClose={() => setPreviewOrder(null)}
+        />
       )}
 
       {toast && (
