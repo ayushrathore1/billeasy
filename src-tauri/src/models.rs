@@ -16,6 +16,8 @@ pub struct Item {
     pub price: f64,
     pub is_active: bool,
     pub sort_order: i64,
+    #[serde(default)]
+    pub image_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -48,4 +50,10 @@ pub struct Settings {
     pub has_cutter: bool,
     pub gst_percent: f64,
     pub payment_mode: String, // "Cash" | "UPI" | "Card" | ""
+    #[serde(default)]
+    pub cloudinary_cloud_name: String,
+    #[serde(default)]
+    pub cloudinary_upload_preset: String,
+    #[serde(default)]
+    pub admin_pin_hash: String,
 }

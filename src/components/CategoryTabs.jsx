@@ -1,23 +1,27 @@
-export default function CategoryTabs({ categories, selectedId, onSelect }) {
+export default function CategoryTabs({ categories, selectedId, onSelect, onSelectAll }) {
   if (categories.length === 0) {
     return (
-      <div className="px-4 py-3 border-b border-gray-200 bg-white">
-        <span className="text-sm text-gray-400">No categories yet — add them in Setup</span>
+      <div className="px-4 py-2.5 border-b border-stone-100 bg-white">
+        <span className="text-sm text-stone-400">No categories — add in Setup</span>
       </div>
     )
   }
 
+  const activeCategories = categories.filter(c => c.is_active)
+
   return (
-    <div className="flex gap-1 overflow-x-auto px-4 py-2 bg-white border-b border-gray-200 scrollbar-thin">
-      {categories.map(cat => (
+    <div className="flex gap-1.5 overflow-x-auto px-4 py-2.5 bg-white border-b border-stone-100 scrollbar-thin">
+      <button
+        onClick={() => onSelectAll?.()}
+        className={`category-pill ${selectedId === null ? 'active' : ''}`}
+      >
+        All
+      </button>
+      {activeCategories.map(cat => (
         <button
           key={cat.id}
           onClick={() => onSelect(cat.id)}
-          className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0 ${
-            selectedId === cat.id
-              ? 'bg-brand-500 text-white shadow-sm'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
+          className={`category-pill ${selectedId === cat.id ? 'active' : ''}`}
         >
           {cat.name}
         </button>

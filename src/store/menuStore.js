@@ -4,6 +4,7 @@ import { call } from '../lib/tauri'
 export const useMenuStore = create((set, get) => ({
   categories: [],
   items: [],
+  allItems: [],
   selectedCategoryId: null,
   loading: false,
 
@@ -32,6 +33,15 @@ export const useMenuStore = create((set, get) => ({
     }
   },
 
+  fetchAllItems: async () => {
+    try {
+      const items = await call('get_items', { categoryId: null })
+      set({ allItems: items, items, selectedCategoryId: null })
+    } catch (e) {
+      console.error('fetchAllItems:', e)
+    }
+  },
+
   createCategory: async (name) => {
     const cat = await call('create_category', { name })
     await get().fetchCategories()
@@ -50,8 +60,8 @@ export const useMenuStore = create((set, get) => ({
     await get().fetchCategories()
   },
 
-  createItem: async (categoryId, name, price) => {
-    const item = await call('create_item', { categoryId, name, price })
+  createItem: async (categoryId, name, price, imageUrl) => {
+    const item = await call('create_item', { categoryId, name, price, imageUrl: imageUrl || null })
     await get().fetchItems(categoryId)
     return item
   },
@@ -59,6 +69,12 @@ export const useMenuStore = create((set, get) => ({
   updateItem: async (id, name, price, isActive) => {
     await call('update_item', { id, name, price, isActive })
     await get().fetchItems(get().selectedCategoryId)
+  },
+
+  updateItemImage: async (id, imageUrl) => {
+    await call('update_item_image', { id, imageUrl })
+    const catId = get().selectedCategoryId
+    if (catId) await get().fetchItems(catId)
   },
 
   deleteItem: async (id) => {

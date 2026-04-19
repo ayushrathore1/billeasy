@@ -40,6 +40,9 @@ pub fn get_settings() -> Result<Settings, String> {
         has_cutter: get_bool_setting(&db, "has_cutter", true),
         gst_percent: gst,
         payment_mode: get_setting(&db, "payment_mode", ""),
+        cloudinary_cloud_name: get_setting(&db, "cloudinary_cloud_name", ""),
+        cloudinary_upload_preset: get_setting(&db, "cloudinary_upload_preset", ""),
+        admin_pin_hash: get_setting(&db, "admin_pin_hash", ""),
     })
 }
 
@@ -59,6 +62,9 @@ pub fn save_settings(settings: Settings) -> Result<(), String> {
         ("has_cutter", if settings.has_cutter { "1".to_string() } else { "0".to_string() }),
         ("gst_percent", format!("{}", settings.gst_percent)),
         ("payment_mode", settings.payment_mode),
+        ("cloudinary_cloud_name", settings.cloudinary_cloud_name),
+        ("cloudinary_upload_preset", settings.cloudinary_upload_preset),
+        ("admin_pin_hash", settings.admin_pin_hash),
     ];
 
     for (key, value) in &pairs {
@@ -115,7 +121,14 @@ pub fn save_logo(app: tauri::AppHandle, base64_data: String) -> Result<String, S
         );
     }
 
+    invalidate_logo();
+
     Ok(logo_path.to_string_lossy().to_string())
+}
+
+// Invalidate cached logo so next print picks up the new one
+fn invalidate_logo() {
+    crate::commands::print::invalidate_logo_cache();
 }
 
 /// Get the logo as a base64 data URI (for display in the webview)
@@ -157,6 +170,8 @@ pub fn delete_logo(app: tauri::AppHandle) -> Result<(), String> {
             [],
         );
     }
+
+    invalidate_logo();
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useMenuStore } from '../store/menuStore'
 import { useSettingsStore } from '../store/settingsStore'
+import { useCloudinaryStore } from '../store/cloudinaryStore'
 import { call } from '../lib/tauri'
 
 export default function Setup() {
@@ -8,9 +9,10 @@ export default function Setup() {
     categories, items, selectedCategoryId,
     fetchCategories, fetchItems,
     createCategory, updateCategory, deleteCategory,
-    createItem, updateItem, deleteItem,
+    createItem, updateItem, updateItemImage, deleteItem,
   } = useMenuStore()
   const { settings, fetchSettings, saveSettings, logoDataUri, fetchLogo, saveLogo, deleteLogo } = useSettingsStore()
+  const { cloudName, uploadPreset, fetchConfig: fetchCloudinary, saveConfig: saveCloudinary, uploadImage, uploading: cloudUploading, getThumbnail } = useCloudinaryStore()
 
   const [showAddCat, setShowAddCat] = useState(false)
   const [newCatName, setNewCatName] = useState('')
@@ -25,14 +27,24 @@ export default function Setup() {
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [detectedPrinters, setDetectedPrinters] = useState([])
   const [loadingPrinters, setLoadingPrinters] = useState(false)
+  const [uploadingItemImage, setUploadingItemImage] = useState(null)
+  const [localCloudName, setLocalCloudName] = useState('')
+  const [localUploadPreset, setLocalUploadPreset] = useState('')
   const fileInputRef = useRef(null)
+  const itemImageRef = useRef(null)
 
   useEffect(() => {
     fetchCategories()
     fetchSettings()
     fetchLogo()
+    fetchCloudinary()
     detectPrinters()
   }, [])
+
+  useEffect(() => {
+    setLocalCloudName(cloudName)
+    setLocalUploadPreset(uploadPreset)
+  }, [cloudName, uploadPreset])
 
   const detectPrinters = async () => {
     setLoadingPrinters(true)
@@ -52,6 +64,7 @@ export default function Setup() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // ── Category handlers ──
   const handleAddCategory = async () => {
     if (!newCatName.trim()) return
     try {
@@ -85,6 +98,7 @@ export default function Setup() {
     } catch (e) { showToast(e, 'error') }
   }
 
+  // ── Item handlers ──
   const handleAddItem = async () => {
     if (!newItemName.trim() || !newItemPrice) return
     const price = parseFloat(newItemPrice)
@@ -119,6 +133,32 @@ export default function Setup() {
     } catch (e) { showToast(e, 'error') }
   }
 
+  const handleSeedMenu = async () => {
+    if (!confirm('This will replace ALL current categories and items with the default menu (160+ items). Continue?')) return
+    try {
+      const result = await call('seed_default_menu')
+      await fetchCategories()
+      showToast(result || 'Default menu loaded!')
+    } catch (e) { showToast(typeof e === 'string' ? e : 'Seed failed', 'error') }
+  }
+
+  // ── Item image upload ──
+  const handleItemImageUpload = async (item, file) => {
+    if (!file) return
+    setUploadingItemImage(item.id)
+    try {
+      const url = await uploadImage(file)
+      await updateItemImage(item.id, url)
+      showToast('Image uploaded!')
+    } catch (e) {
+      showToast(typeof e === 'string' ? e : 'Image upload failed', 'error')
+    } finally {
+      setUploadingItemImage(null)
+      if (itemImageRef.current) itemImageRef.current.value = ''
+    }
+  }
+
+  // ── Print & Logo ──
   const handleTestPrint = async () => {
     setTestPrinting(true)
     try {
@@ -136,84 +176,67 @@ export default function Setup() {
     } finally { setTestPrinting(false) }
   }
 
-  // ── Logo upload handler ──
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select an image file', 'error')
-      return
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      showToast('Image must be under 5MB', 'error')
-      return
-    }
-
+    if (!file.type.startsWith('image/')) { showToast('Please select an image file', 'error'); return }
+    if (file.size > 5 * 1024 * 1024) { showToast('Image must be under 5MB', 'error'); return }
     setUploadingLogo(true)
     try {
-      // Read file as base64
       const reader = new FileReader()
       const base64Data = await new Promise((resolve, reject) => {
-        reader.onload = () => {
-          // Remove the data URI prefix (data:image/png;base64,)
-          const result = reader.result.split(',')[1]
-          resolve(result)
-        }
+        reader.onload = () => { resolve(reader.result.split(',')[1]) }
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-
       await saveLogo(base64Data)
       showToast('Logo uploaded!')
     } catch (e) {
       showToast(typeof e === 'string' ? e : 'Logo upload failed', 'error')
     } finally {
       setUploadingLogo(false)
-      // Reset file input
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   const handleDeleteLogo = async () => {
+    try { await deleteLogo(); showToast('Logo removed') }
+    catch (e) { showToast(typeof e === 'string' ? e : 'Failed to remove logo', 'error') }
+  }
+
+  const handleSaveCloudinary = async () => {
     try {
-      await deleteLogo()
-      showToast('Logo removed')
-    } catch (e) {
-      showToast(typeof e === 'string' ? e : 'Failed to remove logo', 'error')
-    }
+      await saveCloudinary(localCloudName.trim(), localUploadPreset.trim())
+      showToast('Cloudinary settings saved!')
+    } catch (e) { showToast('Failed to save', 'error') }
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left: Categories */}
-      <div className="w-64 flex flex-col bg-white border-r border-gray-200">
-        <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-700 text-sm flex items-center justify-between bg-gray-50">
-          Categories
+    <div className="flex h-full overflow-hidden" style={{ background: '#f5f5f7' }}>
+      {/* Left Sidebar: Categories */}
+      <div className="w-60 flex flex-col glass-dark border-r border-gray-100">
+        <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-between">
+          <span className="font-semibold text-gray-900 text-sm">Categories</span>
           <button
             onClick={() => setShowAddCat(true)}
-            className="text-brand-500 hover:text-brand-700 font-bold text-xl leading-none"
+            className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-400 to-orange-600 text-white font-bold text-sm flex items-center justify-center hover:from-orange-500 hover:to-orange-700 transition-all shadow-sm"
             title="Add category"
           >+</button>
         </div>
 
-        {/* Add category inline */}
         {showAddCat && (
-          <div className="p-3 border-b border-gray-100 bg-brand-50">
+          <div className="p-3 border-b border-gray-100 bg-orange-50/50">
             <input
               autoFocus
               value={newCatName}
               onChange={e => setNewCatName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
               placeholder="Category name"
-              className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-brand-500 outline-none"
+              className="input-premium text-sm py-2"
             />
             <div className="flex gap-2 mt-2">
-              <button onClick={handleAddCategory} className="flex-1 bg-brand-500 text-white text-xs rounded py-1 font-medium hover:bg-brand-600">Save</button>
-              <button onClick={() => { setShowAddCat(false); setNewCatName('') }} className="flex-1 bg-gray-200 text-gray-600 text-xs rounded py-1 hover:bg-gray-300">Cancel</button>
+              <button onClick={handleAddCategory} className="flex-1 btn-primary text-xs py-2">Save</button>
+              <button onClick={() => { setShowAddCat(false); setNewCatName('') }} className="flex-1 btn-secondary text-xs py-2">Cancel</button>
             </div>
           </div>
         )}
@@ -223,9 +246,11 @@ export default function Setup() {
             <div
               key={cat.id}
               onClick={() => fetchItems(cat.id)}
-              className={`px-4 py-3 border-b border-gray-50 cursor-pointer flex items-center gap-2 group hover:bg-gray-50 ${
-                selectedCategoryId === cat.id ? 'bg-brand-50 border-l-4 border-l-brand-500' : ''
-              } ${!cat.is_active ? 'opacity-50' : ''}`}
+              className={`px-4 py-3 cursor-pointer flex items-center gap-2 group transition-all border-l-3 ${
+                selectedCategoryId === cat.id
+                  ? 'bg-orange-50/80 border-l-[3px] border-l-orange-500'
+                  : 'border-l-[3px] border-l-transparent hover:bg-gray-50'
+              } ${!cat.is_active ? 'opacity-40' : ''}`}
             >
               {editingCatId === cat.id ? (
                 <input
@@ -235,7 +260,7 @@ export default function Setup() {
                   onKeyDown={e => e.key === 'Enter' && handleRenameCategory(cat)}
                   onBlur={() => handleRenameCategory(cat)}
                   onClick={e => e.stopPropagation()}
-                  className="flex-1 border border-gray-300 rounded px-1 py-0.5 text-sm outline-none focus:ring-1 focus:ring-brand-500"
+                  className="flex-1 input-premium text-sm py-1 px-2"
                 />
               ) : (
                 <span
@@ -247,12 +272,9 @@ export default function Setup() {
               )}
               <button
                 onClick={e => { e.stopPropagation(); handleToggleCategory(cat) }}
-                className={`text-xs rounded px-1.5 py-0.5 font-medium transition-colors ${
-                  cat.is_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-              >
-                {cat.is_active ? 'ON' : 'OFF'}
-              </button>
+                className={`toggle-switch ${cat.is_active ? 'active' : ''}`}
+                style={{ transform: 'scale(0.6)', transformOrigin: 'center' }}
+              />
               <button
                 onClick={e => { e.stopPropagation(); handleDeleteCategory(cat.id) }}
                 className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity"
@@ -260,393 +282,431 @@ export default function Setup() {
             </div>
           ))}
           {categories.length === 0 && (
-            <div className="text-center text-gray-400 text-sm py-8">
-              No categories yet.<br/>Click + to add one.
+            <div className="text-center text-gray-400 text-sm py-10">
+              No categories yet<br/>Click + to add one
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Right: Items + Settings */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {selectedCategoryId ? (
-          <>
-            <div className="px-6 py-3 border-b border-gray-200 font-semibold text-gray-700 text-sm bg-gray-50">
-              Items in: {categories.find(c => c.id === selectedCategoryId)?.name ?? '—'}
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {/* Items table */}
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-gray-500 text-xs uppercase sticky top-0">
-                  <tr>
-                    <th className="text-left px-6 py-2 font-medium">Name</th>
-                    <th className="text-left px-4 py-2 font-medium">Price</th>
-                    <th className="text-center px-4 py-2 font-medium">Active</th>
-                    <th className="text-center px-4 py-2 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {items.map(item => (
-                    <tr key={item.id} className={`hover:bg-gray-50 ${!item.is_active ? 'opacity-50' : ''}`}>
-                      <td className="px-6 py-3 font-medium text-gray-800">{item.name}</td>
-                      <td className="px-4 py-3 text-gray-700">
-                        {editingItemId === item.id ? (
-                          <input
-                            autoFocus
-                            type="number"
-                            value={editingItemPrice}
-                            onChange={e => setEditingItemPrice(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleEditItemPrice(item)}
-                            onBlur={() => handleEditItemPrice(item)}
-                            className="w-20 border border-gray-300 rounded px-1.5 py-0.5 text-sm outline-none focus:ring-1 focus:ring-brand-500"
-                          />
-                        ) : (
-                          <span
-                            className="cursor-pointer hover:text-brand-600 hover:underline"
-                            onClick={() => { setEditingItemId(item.id); setEditingItemPrice(String(item.price)) }}
-                          >
-                            ₹{item.price}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => handleToggleItem(item)}
-                          className={`text-xs rounded px-2 py-1 font-medium transition-colors ${
-                            item.is_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                          }`}
-                        >
-                          {item.is_active ? 'ON' : 'OFF'}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => handleDeleteItem(item.id)}
-                          className="text-red-400 hover:text-red-600 text-xs font-medium hover:underline"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {/* Add item row */}
-                  <tr className="bg-gray-50">
-                    <td className="px-6 py-3">
-                      <input
-                        value={newItemName}
-                        onChange={e => setNewItemName(e.target.value)}
-                        placeholder="Item name"
-                        className="border border-gray-300 rounded px-2 py-1 text-sm w-40 outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        value={newItemPrice}
-                        onChange={e => setNewItemPrice(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleAddItem()}
-                        placeholder="Price"
-                        className="border border-gray-300 rounded px-2 py-1 text-sm w-20 outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                    </td>
-                    <td colSpan={2} className="px-4 py-3">
-                      <button
-                        onClick={handleAddItem}
-                        className="bg-brand-500 text-white text-xs font-semibold rounded px-3 py-1.5 hover:bg-brand-600 transition-colors"
-                      >
-                        + Add Item
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            <div className="text-center">
-              <div className="text-5xl mb-3">👈</div>
-              <p className="text-sm">Select a category to manage its items</p>
-            </div>
-          </div>
-        )}
-
-        {/* Settings panel at bottom */}
-        <div className="border-t border-gray-200 bg-white p-4 overflow-y-auto max-h-[50vh]">
-          <div className="text-sm font-semibold text-gray-700 mb-3">⚙️ Shop & Bill Settings</div>
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Shop Name</label>
-              <input
-                value={settings.shop_name}
-                onChange={e => saveSettings({ shop_name: e.target.value })}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Tagline</label>
-              <input
-                value={settings.shop_tagline}
-                onChange={e => saveSettings({ shop_tagline: e.target.value })}
-                placeholder="Crafted with Taste & Trust"
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Address</label>
-              <input
-                value={settings.shop_address}
-                onChange={e => saveSettings({ shop_address: e.target.value })}
-                placeholder="Near Main Market, City"
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Phone</label>
-              <input
-                value={settings.shop_phone}
-                onChange={e => saveSettings({ shop_phone: e.target.value })}
-                placeholder="+91 9XXXXXXXXX"
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Bill Footer</label>
-              <input
-                value={settings.bill_footer}
-                onChange={e => saveSettings({ bill_footer: e.target.value })}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">GST %</label>
-              <input
-                type="number"
-                min="0"
-                max="28"
-                step="0.5"
-                value={settings.gst_percent || 0}
-                onChange={e => saveSettings({ gst_percent: parseFloat(e.target.value) || 0 })}
-                placeholder="5"
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Default Payment Mode</label>
-              <select
-                value={settings.payment_mode || ''}
-                onChange={e => saveSettings({ payment_mode: e.target.value })}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500 bg-white"
-              >
-                <option value="">None</option>
-                <option value="Cash">💵 Cash</option>
-                <option value="UPI">📱 UPI</option>
-                <option value="Card">💳 Card</option>
-                <option value="Online">🌐 Online</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">Printer Connection</label>
-              <select
-                value={settings.printer_type || 'usb'}
-                onChange={e => saveSettings({ printer_type: e.target.value })}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500 bg-white"
-              >
-                <option value="usb">🔌 USB Port</option>
-                <option value="bluetooth">📶 Bluetooth (COM Port)</option>
-                <option value="network">🌐 Network (IP Address)</option>
-                <option value="name">🖨️ Windows Printer Name</option>
-              </select>
-            </div>
-          </div>
-
-          {/* ── Receipt Logo Upload ── */}
-          <div className="mb-3 p-3 rounded-xl border border-gray-200 bg-gray-50">
-            <div className="flex items-start gap-3">
-              {/* Logo preview */}
-              <div className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
-                {logoDataUri ? (
-                  <img src={logoDataUri} alt="Logo" className="w-full h-full object-contain" />
-                ) : (
-                  <span className="text-gray-300 text-2xl">🖼️</span>
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold text-gray-700 mb-1">Receipt Logo / Watermark</div>
-                <p className="text-xs text-gray-400 mb-2">
-                  Appears as a low-opacity background watermark on PDF receipts. Printed as header on thermal printers.
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLogoUpload}
-                    className="hidden"
-                    id="logo-upload"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadingLogo}
-                    className="bg-brand-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-brand-600 disabled:opacity-50 transition-colors"
-                  >
-                    {uploadingLogo ? 'Uploading…' : logoDataUri ? '🔄 Change' : '📤 Upload'}
-                  </button>
-                  {logoDataUri && (
-                    <button
-                      onClick={handleDeleteLogo}
-                      className="text-red-500 hover:text-red-700 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50 transition-colors"
-                    >
-                      🗑️ Remove
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ── Detected Printers ── */}
-          {detectedPrinters.length > 0 && (
-            <div className="mb-3 p-3 rounded-xl border border-blue-100 bg-blue-50">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-semibold text-blue-700">🖨️ Detected Printers ({detectedPrinters.length})</div>
-                <button
-                  onClick={detectPrinters}
-                  disabled={loadingPrinters}
-                  className="text-xs text-blue-500 hover:text-blue-700 font-medium disabled:opacity-50"
-                >
-                  {loadingPrinters ? '⏳ Scanning…' : '🔄 Refresh'}
-                </button>
-              </div>
-              <div className="grid grid-cols-1 gap-1.5 max-h-32 overflow-y-auto">
-                {detectedPrinters.map((p, i) => (
-                  <button
-                    key={i}
-                    onClick={() => saveSettings({ printer_name: p.name, printer_type: 'name' })}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs transition-all ${
-                      settings.printer_name === p.name && settings.printer_type === 'name'
-                        ? 'bg-brand-500 text-white shadow-sm'
-                        : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
-                    }`}
-                  >
-                    <span className="text-base">
-                      {p.name.toLowerCase().includes('pdf') ? '📄'
-                        : p.name.toLowerCase().includes('fax') ? '📠'
-                        : p.name.toLowerCase().includes('onenote') || p.name.toLowerCase().includes('xps') ? '📝'
-                        : '🖨️'}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{p.name}</div>
-                      <div className={`text-[10px] truncate ${
-                        settings.printer_name === p.name && settings.printer_type === 'name' ? 'text-white/70' : 'text-gray-400'
-                      }`}>
-                        {p.driver} • {p.port_name}
-                      </div>
-                    </div>
-                    {settings.printer_name === p.name && settings.printer_type === 'name' && (
-                      <span className="text-xs">✓</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {detectedPrinters.length === 0 && !loadingPrinters && (
-            <div className="mb-3 p-2 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-between">
-              <span className="text-xs text-gray-400">No printers detected</span>
-              <button
-                onClick={detectPrinters}
-                className="text-xs text-brand-500 hover:text-brand-700 font-medium"
-              >
-                🔍 Scan Printers
-              </button>
-            </div>
-          )}
-
-          {loadingPrinters && detectedPrinters.length === 0 && (
-            <div className="mb-3 p-3 rounded-xl border border-gray-200 bg-gray-50 flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-xs text-gray-500">Scanning for printers…</span>
-            </div>
-          )}
-
-          {/* ── Printer options row ── */}
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <label className="text-xs text-gray-500 font-medium">
-                {settings.printer_type === 'bluetooth' ? 'Bluetooth COM Port'
-                  : settings.printer_type === 'network' ? 'Printer IP Address'
-                  : settings.printer_type === 'name' ? 'Selected Printer'
-                  : 'USB Port Name'}
-              </label>
-              {settings.printer_type === 'name' && detectedPrinters.length > 0 ? (
-                <select
-                  value={settings.printer_name}
-                  onChange={e => saveSettings({ printer_name: e.target.value })}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500 bg-white"
-                >
-                  <option value="">— Select a printer —</option>
-                  {detectedPrinters.map((p, i) => (
-                    <option key={i} value={p.name}>{p.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={settings.printer_name}
-                  onChange={e => saveSettings({ printer_name: e.target.value })}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mt-0.5 outline-none focus:ring-1 focus:ring-brand-500"
-                  placeholder={
-                    settings.printer_type === 'bluetooth' ? 'COM3'
-                      : settings.printer_type === 'network' ? '192.168.1.100:9100'
-                      : settings.printer_type === 'name' ? 'POS-58'
-                      : 'USB001'
-                  }
-                />
-              )}
-              <p className="text-xs text-gray-400 mt-0.5">
-                {settings.printer_type === 'bluetooth'
-                  ? 'Pair printer in Windows Settings → Bluetooth first, then use assigned COM port'
-                  : settings.printer_type === 'network'
-                  ? 'Enter printer IP. Port 9100 is used if not specified'
-                  : settings.printer_type === 'name'
-                  ? 'Choose a printer from the detected list above, or type a name manually'
-                  : 'Usually USB001 — check in Device Manager → Ports'}
-              </p>
-            </div>
-
-            {/* Has cutter toggle */}
-            <div className="flex flex-col items-center mb-5">
-              <label className="text-xs text-gray-500 font-medium mb-1 whitespace-nowrap">Auto-Cut</label>
-              <button
-                onClick={() => saveSettings({ has_cutter: !settings.has_cutter })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${
-                  settings.has_cutter ? 'bg-green-500' : 'bg-gray-300'
-                }`}
-              >
-                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                  settings.has_cutter ? 'translate-x-5' : 'translate-x-0.5'
-                }`} />
-              </button>
-              <span className="text-xs text-gray-400 mt-0.5">{settings.has_cutter ? 'ON' : 'OFF'}</span>
-            </div>
-
+          {/* Load default menu button */}
+          <div className="p-3 border-t border-gray-100">
             <button
-              onClick={handleTestPrint}
-              disabled={testPrinting}
-              className="bg-gray-700 text-white text-xs font-medium px-4 py-2 rounded hover:bg-gray-800 disabled:opacity-50 transition-colors whitespace-nowrap mb-5"
+              onClick={handleSeedMenu}
+              className="w-full text-xs py-2 px-3 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium transition-colors border border-blue-200"
             >
-              {testPrinting ? 'Printing…' : '🖨️ Test Print'}
+              📦 Load Default Menu
             </button>
           </div>
         </div>
       </div>
 
+      {/* Right: Content area */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+
+          {/* ═══════════════ MENU ITEMS SECTION ═══════════════ */}
+          {selectedCategoryId ? (
+            <div>
+              <div className="settings-section-title">
+                Items — {categories.find(c => c.id === selectedCategoryId)?.name ?? '—'}
+              </div>
+              <div className="settings-card">
+                {items.map(item => (
+                  <div key={item.id} className={`settings-row group ${!item.is_active ? 'opacity-40' : ''}`}>
+                    {/* Thumbnail */}
+                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-50 flex-shrink-0 border border-gray-100">
+                      {item.image_url ? (
+                        <img src={getThumbnail(item.image_url, 80, 80)} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-300 text-lg">🍽️</div>
+                      )}
+                    </div>
+
+                    {/* Name */}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-800 text-sm truncate">{item.name}</div>
+                    </div>
+
+                    {/* Price */}
+                    <div className="w-24">
+                      {editingItemId === item.id ? (
+                        <input
+                          autoFocus
+                          type="number"
+                          value={editingItemPrice}
+                          onChange={e => setEditingItemPrice(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleEditItemPrice(item)}
+                          onBlur={() => handleEditItemPrice(item)}
+                          className="input-premium text-sm py-1 px-2 w-full"
+                        />
+                      ) : (
+                        <span
+                          className="text-sm font-semibold text-orange-600 cursor-pointer hover:text-orange-700"
+                          onClick={() => { setEditingItemId(item.id); setEditingItemPrice(String(item.price)) }}
+                        >
+                          ₹{item.price}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Image upload */}
+                    <button
+                      onClick={() => {
+                        const input = document.createElement('input')
+                        input.type = 'file'
+                        input.accept = 'image/*'
+                        input.onchange = (e) => handleItemImageUpload(item, e.target.files[0])
+                        input.click()
+                      }}
+                      disabled={uploadingItemImage === item.id || !cloudName}
+                      className="text-xs text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30"
+                      title={cloudName ? 'Upload image' : 'Configure Cloudinary first'}
+                    >
+                      {uploadingItemImage === item.id ? '⏳' : '📷'}
+                    </button>
+
+                    {/* Toggle */}
+                    <button
+                      onClick={() => handleToggleItem(item)}
+                      className={`toggle-switch ${item.is_active ? 'active' : ''}`}
+                      style={{ transform: 'scale(0.65)', transformOrigin: 'center' }}
+                    />
+
+                    {/* Delete */}
+                    <button
+                      onClick={() => handleDeleteItem(item.id)}
+                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity font-medium"
+                    >✕</button>
+                  </div>
+                ))}
+
+                {/* Add item row */}
+                <div className="settings-row bg-gray-50/50">
+                  <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <span className="text-gray-300 text-sm">+</span>
+                  </div>
+                  <input
+                    value={newItemName}
+                    onChange={e => setNewItemName(e.target.value)}
+                    placeholder="Item name"
+                    className="input-premium text-sm py-2 flex-1"
+                  />
+                  <input
+                    type="number"
+                    value={newItemPrice}
+                    onChange={e => setNewItemPrice(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAddItem()}
+                    placeholder="₹ Price"
+                    className="input-premium text-sm py-2 w-24"
+                  />
+                  <button onClick={handleAddItem} className="btn-primary text-xs py-2 px-4">Add</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="card-premium p-12 text-center">
+              <div className="text-5xl mb-3 opacity-40">👈</div>
+              <p className="text-gray-500 font-medium">Select a category to manage items</p>
+            </div>
+          )}
+
+          {/* ═══════════════ SHOP SETTINGS ═══════════════ */}
+          <div>
+            <div className="settings-section-title">Shop Information</div>
+            <div className="settings-card">
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Shop Name</span>
+                <input
+                  value={settings.shop_name}
+                  onChange={e => saveSettings({ shop_name: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                  placeholder="My Shop"
+                />
+              </div>
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Tagline</span>
+                <input
+                  value={settings.shop_tagline}
+                  onChange={e => saveSettings({ shop_tagline: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                  placeholder="Crafted with Taste & Trust"
+                />
+              </div>
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Address</span>
+                <input
+                  value={settings.shop_address}
+                  onChange={e => saveSettings({ shop_address: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                  placeholder="Near Main Market, City"
+                />
+              </div>
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Phone</span>
+                <input
+                  value={settings.shop_phone}
+                  onChange={e => saveSettings({ shop_phone: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                  placeholder="+91 9XXXXXXXXX"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ═══════════════ RECEIPT SETTINGS ═══════════════ */}
+          <div>
+            <div className="settings-section-title">Receipt Settings</div>
+            <div className="settings-card">
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Bill Footer</span>
+                <input
+                  value={settings.bill_footer}
+                  onChange={e => saveSettings({ bill_footer: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                  placeholder="Thank you ❤️"
+                />
+              </div>
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">GST %</span>
+                <input
+                  type="number" min="0" max="28" step="0.5"
+                  value={settings.gst_percent || 0}
+                  onChange={e => saveSettings({ gst_percent: parseFloat(e.target.value) || 0 })}
+                  className="input-premium text-sm w-24"
+                  placeholder="5"
+                />
+              </div>
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Payment Mode</span>
+                <select
+                  value={settings.payment_mode || ''}
+                  onChange={e => saveSettings({ payment_mode: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                >
+                  <option value="">None</option>
+                  <option value="Cash">💵 Cash</option>
+                  <option value="UPI">📱 UPI</option>
+                  <option value="Card">💳 Card</option>
+                  <option value="Online">🌐 Online</option>
+                </select>
+              </div>
+
+              {/* Logo */}
+              <div className="settings-row items-start">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0 mt-1">Receipt Logo</span>
+                <div className="flex-1 flex items-start gap-3">
+                  <div className="w-14 h-14 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {logoDataUri ? (
+                      <img src={logoDataUri} alt="Logo" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-gray-300 text-xl">🖼️</span>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 mb-2">Watermark on PDF • Header on thermal</p>
+                    <div className="flex gap-2">
+                      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingLogo}
+                        className="btn-primary text-xs py-1.5 px-3"
+                      >
+                        {uploadingLogo ? '⏳' : logoDataUri ? '🔄 Change' : '📤 Upload'}
+                      </button>
+                      {logoDataUri && (
+                        <button onClick={handleDeleteLogo} className="text-red-500 hover:text-red-700 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50 transition-colors">
+                          🗑️
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ═══════════════ PRINTER SETTINGS ═══════════════ */}
+          <div>
+            <div className="settings-section-title">Printer Configuration</div>
+            <div className="settings-card">
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Connection</span>
+                <select
+                  value={settings.printer_type || 'usb'}
+                  onChange={e => saveSettings({ printer_type: e.target.value })}
+                  className="input-premium text-sm flex-1"
+                >
+                  <option value="usb">🔌 USB Port</option>
+                  <option value="bluetooth">📶 Bluetooth (COM)</option>
+                  <option value="network">🌐 Network (IP)</option>
+                  <option value="name">🖨️ Windows Printer</option>
+                </select>
+              </div>
+
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">
+                  {settings.printer_type === 'bluetooth' ? 'COM Port'
+                    : settings.printer_type === 'network' ? 'IP Address'
+                    : settings.printer_type === 'name' ? 'Printer'
+                    : 'USB Port'}
+                </span>
+                {settings.printer_type === 'name' && detectedPrinters.length > 0 ? (
+                  <select
+                    value={settings.printer_name}
+                    onChange={e => saveSettings({ printer_name: e.target.value })}
+                    className="input-premium text-sm flex-1"
+                  >
+                    <option value="">— Select —</option>
+                    {detectedPrinters.map((p, i) => (
+                      <option key={i} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={settings.printer_name}
+                    onChange={e => saveSettings({ printer_name: e.target.value })}
+                    className="input-premium text-sm flex-1"
+                    placeholder={
+                      settings.printer_type === 'bluetooth' ? 'COM3'
+                        : settings.printer_type === 'network' ? '192.168.1.100:9100'
+                        : settings.printer_type === 'name' ? 'POS-58'
+                        : 'USB001'
+                    }
+                  />
+                )}
+              </div>
+
+              <div className="settings-row">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0">Auto-Cut</span>
+                <button
+                  onClick={() => saveSettings({ has_cutter: !settings.has_cutter })}
+                  className={`toggle-switch ${settings.has_cutter ? 'active' : ''}`}
+                />
+                <span className="text-xs text-gray-400 ml-2">{settings.has_cutter ? 'Enabled' : 'Disabled'}</span>
+              </div>
+            </div>
+
+            {/* Detected printers */}
+            {detectedPrinters.length > 0 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <span className="text-xs font-semibold text-blue-600">🖨️ Detected ({detectedPrinters.length})</span>
+                  <button onClick={detectPrinters} disabled={loadingPrinters} className="text-xs text-blue-500 hover:text-blue-700 font-medium">
+                    {loadingPrinters ? '⏳' : '🔄 Refresh'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {detectedPrinters.map((p, i) => (
+                    <button
+                      key={i}
+                      onClick={() => saveSettings({ printer_name: p.name, printer_type: 'name' })}
+                      className={`card-interactive flex items-center gap-3 px-4 py-3 text-left text-xs ${
+                        settings.printer_name === p.name && settings.printer_type === 'name' ? 'active' : ''
+                      }`}
+                    >
+                      <span className="text-base">
+                        {p.name.toLowerCase().includes('pdf') ? '📄'
+                          : p.name.toLowerCase().includes('fax') ? '📠'
+                          : p.name.toLowerCase().includes('onenote') || p.name.toLowerCase().includes('xps') ? '📝'
+                          : '🖨️'}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate text-sm">{p.name}</div>
+                        <div className="text-[10px] text-gray-400 truncate">{p.driver} • {p.port_name}</div>
+                      </div>
+                      {settings.printer_name === p.name && settings.printer_type === 'name' && (
+                        <span className="text-orange-500 font-bold">✓</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {detectedPrinters.length === 0 && !loadingPrinters && (
+              <div className="mt-3 card-premium p-3 flex items-center justify-between">
+                <span className="text-xs text-gray-400">No printers detected</span>
+                <button onClick={detectPrinters} className="text-xs text-orange-500 hover:text-orange-700 font-medium">
+                  🔍 Scan
+                </button>
+              </div>
+            )}
+
+            {loadingPrinters && detectedPrinters.length === 0 && (
+              <div className="mt-3 card-premium p-4 flex items-center gap-3">
+                <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs text-gray-500">Scanning for printers…</span>
+              </div>
+            )}
+
+            {/* Test Print */}
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={handleTestPrint}
+                disabled={testPrinting}
+                className="btn-secondary text-sm px-5 py-2.5 flex items-center gap-2"
+              >
+                {testPrinting ? (
+                  <><div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" /> Printing…</>
+                ) : (
+                  <>🖨️ Test Print</>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* ═══════════════ CLOUDINARY SETTINGS ═══════════════ */}
+          <div>
+            <div className="settings-section-title">☁️ Product Images (Cloudinary)</div>
+            <div className="settings-card">
+              <div className="settings-row items-start">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0 mt-2">Cloud Name</span>
+                <div className="flex-1">
+                  <input
+                    value={localCloudName}
+                    onChange={e => setLocalCloudName(e.target.value)}
+                    className="input-premium text-sm"
+                    placeholder="your-cloud-name"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">From Cloudinary Dashboard → Account Details</p>
+                </div>
+              </div>
+              <div className="settings-row items-start">
+                <span className="text-sm text-gray-500 w-28 flex-shrink-0 mt-2">Upload Preset</span>
+                <div className="flex-1">
+                  <input
+                    value={localUploadPreset}
+                    onChange={e => setLocalUploadPreset(e.target.value)}
+                    className="input-premium text-sm"
+                    placeholder="billeasy-unsigned"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Settings → Upload → Add unsigned preset</p>
+                </div>
+              </div>
+              <div className="settings-row justify-end">
+                <button
+                  onClick={handleSaveCloudinary}
+                  className="btn-primary text-xs py-2 px-5"
+                >
+                  Save Cloudinary Config
+                </button>
+              </div>
+            </div>
+            {!cloudName && (
+              <div className="mt-2 px-1">
+                <p className="text-xs text-amber-600">
+                  ⚠️ Configure Cloudinary to enable product image uploads on items
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom spacer */}
+          <div className="h-6" />
+        </div>
+      </div>
+
       {/* Toast */}
       {toast && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-lg text-white text-sm font-medium z-50 toast-enter ${
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl shadow-lg text-white text-sm font-medium z-50 toast-enter ${
           toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'
         }`}>
           {toast.msg}
