@@ -3,7 +3,10 @@ name: Build and Release BillEasy
 on:
   push:
     branches:
+      - main
       - release
+    tags:
+      - 'v*'
 
 jobs:
   build-and-release:
@@ -36,7 +39,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and publish release
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,16 +49,26 @@ jobs:
           tagName: v__VERSION__
           releaseName: 'BillEasy v__VERSION__'
           releaseBody: |
-            ## BillEasy v__VERSION__
+            ## BillEasy v__VERSION__ — Production Release
+
+            ### What's New
+            - 🖨️ ESC/POS receipt engine with logo, QR code, bold & double-size text
+            - 📊 Auto Excel export — every order saved to CSV (Documents/BillEasy/)
+            - 💾 Data persists across reinstalls (stored in Documents folder)
+            - 📦 160+ default menu items pre-loaded on fresh install
+            - ⌨️ Physical keyboard support for PIN entry
+            - 🔒 Admin PIN security for Setup & History
+            - 🎨 Premium bakery POS UI with warm theme
 
             ### Download & Install
             1. Download **BillEasy_x64-setup.exe** below
-            2. Right-click the file → Properties → tick **Unblock** → OK
+            2. Right-click → Properties → tick **Unblock** → OK
             3. Double-click to install
             4. Enter your license key when prompted
 
             ### For Existing Users
-            Your app will show an update notification automatically.
+            - Your data is safe — the app auto-migrates to Documents/BillEasy/
+            - The update will preserve all your orders and settings
           releaseDraft: false
           prerelease: false
           args: --target x86_64-pc-windows-msvc

@@ -1,6 +1,6 @@
 [package]
 name = "billeasy"
-version = "1.0.0"
+version = "2.0.0"
 description = "BillEasy Desktop Billing App"
 authors = ["BillEasy"]
 edition = "2021"
